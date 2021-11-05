@@ -1,0 +1,51 @@
+Parameters:
+    Datalake:
+        Type: String
+Resources:
+  EventBridgeGlueExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${Datalake}-${AWS::AccountId}-${AWS::Region}-EventBridgeGlueExecutionRole'
+      Description: Has permissions to invoke the NotifyEvent API for an AWS Glue workflow.
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - events.amazonaws.com
+            Action:
+              - sts:AssumeRole
+  GlueNotifyEventPolicy:
+    DependsOn:
+      - EventBridgeGlueExecutionRole
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: !Sub GlueNotifyEventPolicy-${AWS::StackName}
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          -
+            Effect: "Allow"
+            Action:
+              - glue:notifyEvent
+            Resource: !Sub arn:aws:glue:${AWS::Region}:${AWS::AccountId}:workflow/${Datalake}-workflow
+      Roles:
+        - !Ref EventBridgeGlueExecutionRole
+  GlueServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${Datalake}-${AWS::AccountId}-${AWS::Region}-GlueServiceRole
+      Description: Runs the AWS Glue job that has permission to download the script, read data from the source, and write data to the destination after conversion.
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - glue.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSGlueServiceRole

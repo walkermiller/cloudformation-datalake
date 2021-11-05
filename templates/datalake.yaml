@@ -1,0 +1,203 @@
+Parameters:
+    Datalake:
+        Type: String
+Resources:
+  convertedBucketResource:
+    Type: AWS::LakeFormation::Resource
+    Properties:
+      ResourceArn: !Sub arn:aws:s3:::${Datalake}-${AWS::AccountId}-${AWS::Region}-converted
+      UseServiceLinkedRole: True
+
+  EventDrivenWorkflow:
+    Type: AWS::Glue::Workflow
+    Properties:
+      Name: !Sub '${Datalake}-workflow'
+      Description: Glue workflow triggered by S3 PutObject Event
+    
+  EventBridgeRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub '${Datalake}_s3_file_upload_trigger_rule'
+      EventPattern:
+        source: ["aws.s3"]
+        detail-type: [AWS AP Call via CloudTrail]
+        detail:
+          eventSource: ["s3.amazon.com"]
+          eventName: ["PutObject"]
+          requstParameters:
+            bucketName: [!Sub '${Datalake}-${AWS::AccountId}-${AWS::Region}-raw']
+            key:
+            - prefix: data/
+      Targets:
+        - Arn: !Sub arn:aws:glue:${AWS::Region}:${AWS::AccountId}:workflow/${EventDrivenWorkflow}
+          Id: CloudTrailTriggersWorkflow
+          RoleArn: !Sub arn:aws:iam::${AWS::AccountId}:role/testlake-${AWS::AccountId}-${AWS::Region}-EventBridgeGlueExecutionRole
+
+  Database:
+    Type: AWS::Glue::Database
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseInput:
+        Name: !Sub ${Datalake}
+        Description: !Sub 'This database is used to organize the metadata tables for ${Datalake}'
+
+  SourceTable:
+    DependsOn: Database
+    Type: AWS::Glue::Table
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseName: !Sub ${Datalake}
+      TableInput: 
+        Name: !Sub 'source_${Datalake}'
+        TableType: EXTERNAL_TABLE
+        StorageDescriptor:
+          Location: !Sub 's3://${Datalake}-${AWS::AccountId}-${AWS::Region}-raw/data'
+
+
+  PreJobTrigger:
+    DependsOn: PreJob
+    Type: AWS::Glue::Trigger
+    Properties:
+      Name: !Sub '${Datalake}_pre_job_trigger'
+      Description: Glue trigger which is listening on S3 PutObject events
+      Type: EVENT
+      Actions:
+        - JobName: !Ref PreJob
+      WorkflowName: !Ref EventDrivenWorkflow
+
+  PostJobTrigger:
+    DependsOn: PostJob
+    Type: AWS::Glue::Trigger
+    Properties:
+      Name: !Sub '${Datalake}_post_job_trigger'
+      Description: Glue trigger which is listening on conversion job completion
+      Type: CONDITIONAL
+      StartOnCreation: True
+      Actions:
+        - JobName: !Ref PostJob
+      Predicate:
+        Logical: ANY
+        Conditions:
+          - LogicalOperator: EQUALS
+            JobName: !Ref ConversionJob
+            State: SUCCEEDED
+      WorkflowName: !Ref EventDrivenWorkflow
+
+  CrawlerTrigger:
+    DependsOn: SourceCrawler
+    Type: AWS::Glue::Trigger
+    Properties:
+      Name: !Sub '${Datalake}_crawler_trigger'
+      Description: Glue trigger which is listening on pre job completion
+      Type: CONDITIONAL
+      StartOnCreation: True
+      Actions:
+        - CrawlerName: !Ref SourceCrawler
+      Predicate:
+        Logical: ANY
+        Conditions:
+          - LogicalOperator: EQUALS
+            JobName: !Ref PreJob
+            State: SUCCEEDED
+      WorkflowName: !Ref EventDrivenWorkflow
+
+  ConversionJobTrigger:
+    DependsOn:
+      - SourceCrawler
+      - ConversionJob
+    Type: AWS::Glue::Trigger
+    Properties:
+      Name: !Sub '${Datalake}_conversion_job_trigger'
+      Description: Glue trigger which is listening on crawler completion
+      Type: CONDITIONAL
+      StartOnCreation: True
+      Actions:
+        - JobName: !Ref ConversionJob
+      Predicate:
+        Logical: ANY
+        Conditions:
+          - LogicalOperator: EQUALS
+            CrawlerName: !Ref SourceCrawler
+            CrawlState: SUCCEEDED
+      WorkflowName: !Ref EventDrivenWorkflow
+
+  SourceCrawler:
+    DependsOn: [SourceTable]
+    Type: AWS::Glue::Crawler
+    Properties:
+      Name: !Sub '${Datalake}_discovery_crawler'
+      Description: Crawler which discovers raw data table Schema
+      DatabaseName: !Ref Database
+      Role: !Sub arn:aws:iam::${AWS::AccountId}:role/${Datalake}-${AWS::AccountId}-${AWS::Region}-GlueServiceRole
+      SchemaChangePolicy:
+        UpdateBehavior: UPDATE_IN_DATABASE
+        DeleteBehavior: LOG
+      Targets:
+        CatalogTargets:
+          - DatabaseName: !Ref Database
+            Tables: [!Ref SourceTable]
+      Configuration: "{\"Version\":1.0,\"Grouping\":{\"TableGroupingPolicy\":\"CombineCompatibleSchemas\"}}"
+ 
+  PreJob:
+    Type: AWS::Glue::Job
+    Properties:
+      Name: !Sub '${Datalake}_pre_job'
+      Description: Glue job that updates state to STARTED in workflow run properties
+      Role: !Sub arn:aws:iam::${AWS::AccountId}:role/${Datalake}-${AWS::AccountId}-${AWS::Region}-GlueServiceRole
+      GlueVersion: 1.0
+      Command:
+        Name: pythonshell
+        PythonVersion: 3
+        ScriptLocation: !Sub 's3://${AWS::AccountId}-${AWS::Region}-glue-scripts/scripts/update_workflow_property.py'
+      MaxCapacity: 0.0625
+      ExecutionProperty:
+        MaxConcurrentRuns: 1
+      DefaultArguments:
+        --job-language: python
+        --TempDir: !Sub 's3://${Datalake}-${AWS::AccountId}-${AWS::Region}-converted/tmp/'
+        --transition_state: STARTED
+        --extra-py-files: !Sub 's3://aws-glue-assets-${AWS::Region}/scripts/lib/utils.py'
+
+  PostJob:
+    Type: AWS::Glue::Job
+    Properties:
+      Name: !Sub '${Datalake}_post_job'
+      Description: Glue job that updates workflow run property
+      Role: !Sub arn:aws:iam::${AWS::AccountId}:role/${Datalake}-${AWS::AccountId}-${AWS::Region}-GlueServiceRole
+      GlueVersion: 1.0
+      Command:
+        Name: pythonshell
+        PythonVersion: 3
+        ScriptLocation: !Sub 's3://${AWS::AccountId}-${AWS::Region}-glue-scripts/scripts/update_workflow_property.py'
+      MaxCapacity: 0.0625
+      ExecutionProperty:
+        MaxConcurrentRuns: 1
+      DefaultArguments:
+        --job-language: python
+        --TempDir: !Sub 's3://${Datalake}-${AWS::AccountId}-${AWS::Region}-converted/tmp/'
+        --transition_state: COMPLETED
+        --extra-py-files: !Sub 's3://aws-glue-assets-${AWS::Region}/scripts/lib/utils.py'
+
+  ConversionJob:
+    DependsOn: [SourceTable, SourceCrawler]
+    Type: AWS::Glue::Job
+    Properties:
+      Name: !Sub '${Datalake}_conversion_etl_job'
+      Role: !Sub arn:aws:iam::${AWS::AccountId}:role/${Datalake}-${AWS::AccountId}-${AWS::Region}-GlueServiceRole
+      GlueVersion: 2.0
+      Command:
+        Name: glueetl
+        PythonVersion: 3
+        ScriptLocation: !Sub 's3://${AWS::AccountId}-${AWS::Region}-glue-scripts/scripts/transform.py'
+      NumberOfWorkers: 2
+      WorkerType: G.1X
+      ExecutionProperty:
+        MaxConcurrentRuns: 1
+      DefaultArguments:
+        --job-bookmark-option: job-bookmark-enable
+        --job-language: python
+        --TempDir: !Sub 's3://${Datalake}-${AWS::AccountId}-${AWS::Region}-converted/tmp/'
+        --output_database: !Ref Datalake
+        --tmp_table: !Ref SourceTable
+        --output_table: !Sub 'converted_${Datalake}'
+        --output_path: !Sub 's3://${Datalake}-${AWS::AccountId}-${AWS::Region}-converted/data'

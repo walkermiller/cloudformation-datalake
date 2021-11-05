@@ -1,0 +1,75 @@
+Parameters:
+    Datalake:
+        Type: String
+Resources:
+  KMSKey:
+    Type: AWS::KMS::Key
+    Properties:
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: 2012-10-17
+        Id: key-s3
+        Statement:
+          - Sid: Enable IAM Permissions
+            Effect: Allow
+            Principal:
+              AWS: !Join ['', ['arn:aws:iam::', !Ref 'AWS::AccountId', ':root']]
+            Action: 'kms:*'
+            Resource: '*'
+  
+  GlueScriptBucket:
+    DependsOn: KMSKey
+    Type: AWS::S3::Bucket
+    Properties:
+      AccessControl: Private
+      BucketName: !Sub ${AWS::AccountId}-${AWS::Region}-glue-scripts
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: True
+        BlockPublicPolicy: True
+        IgnorePublicAcls: True
+        RestrictPublicBuckets: True
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - BucketKeyEnabled: True
+            ServerSideEncryptionByDefault:
+              SSEAlgorithm: 'aws:kms'
+              KMSMasterKeyID: !GetAtt KMSKey.Arn
+  
+  RawBucket:
+    DependsOn: KMSKey
+    Type: AWS::S3::Bucket
+    Properties:
+      AccessControl: Private
+      BucketName: !Sub ${Datalake}-${AWS::AccountId}-${AWS::Region}-raw
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: True
+        BlockPublicPolicy: True
+        IgnorePublicAcls: True
+        RestrictPublicBuckets: True
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - BucketKeyEnabled: True
+
+  RawBucketResource:
+    Type: AWS::LakeFormation::Resource
+    Properties:
+      ResourceArn: !GetAtt RawBucket.Arn
+      UseServiceLinkedRole: True
+  
+  convertedBucket:
+    DependsOn: KMSKey
+    Type: AWS::S3::Bucket
+    Properties:
+      AccessControl: Private
+      BucketName: !Sub ${Datalake}-${AWS::AccountId}-${AWS::Region}-converted
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: True
+        BlockPublicPolicy: True
+        IgnorePublicAcls: True
+        RestrictPublicBuckets: True
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - BucketKeyEnabled: True
+            ServerSideEncryptionByDefault:
+              SSEAlgorithm: 'aws:kms'
+              KMSMasterKeyID: !GetAtt KMSKey.Arn 
