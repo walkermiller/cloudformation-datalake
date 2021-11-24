@@ -2,13 +2,19 @@ Parameters:
     Datalake:
         Type: String
 Resources:
-  convertedBucketResource:
+  convertedDataLakeSourceResource:
     Type: AWS::LakeFormation::Resource
     Properties:
       ResourceArn: !Sub arn:aws:s3:::${Datalake}-${AWS::AccountId}-${AWS::Region}-converted
       UseServiceLinkedRole: True
 
-  convertedBucketPermissions:
+  rawDataLakeSourceResource:
+    Type: AWS::LakeFormation::Resource
+    Properties:
+      ResourceArn: !Sub arn:aws:s3:::${Datalake}-${AWS::AccountId}-${AWS::Region}-raw
+      UseServiceLinkedRole: True
+
+  convertedDataLakeSourcePermissions:
     Type: AWS::LakeFormation::Permissions
     DependsOn: convertedBucketResource
     Properties:
@@ -21,15 +27,9 @@ Resources:
           CatalogId: !Ref AWS::AccountId
           S3Resource: !Sub arn:aws:s3:::${Datalake}-${AWS::AccountId}-${AWS::Region}-converted
 
-  rawdBucketResource:
-    Type: AWS::LakeFormation::Resource
-    Properties:
-      ResourceArn: !Sub arn:aws:s3:::${Datalake}-${AWS::AccountId}-${AWS::Region}-raw
-      UseServiceLinkedRole: True
-
-  rawBucketPermissions:
+  rawDataLakeSourcePermissions:
     Type: AWS::LakeFormation::Permissions
-    DependsOn: rawdBucketResource
+    DependsOn: rawBucketResource
     Properties:
       DataLakePrincipal:
         DataLakePrincipalIdentifier: !Sub arn:aws:iam::${AWS::AccountId}:role/${Datalake}-${AWS::AccountId}-${AWS::Region}-GlueServiceRole
