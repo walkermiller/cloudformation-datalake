@@ -29,7 +29,7 @@ Resources:
 
   rawDataLakeSourcePermissions:
     Type: AWS::LakeFormation::Permissions
-    DependsOn: rawBucketResource
+    DependsOn: rawDataLakeSourceResource
     Properties:
       DataLakePrincipal:
         DataLakePrincipalIdentifier: !Sub arn:aws:iam::${AWS::AccountId}:role/${Datalake}-${AWS::AccountId}-${AWS::Region}-GlueServiceRole
