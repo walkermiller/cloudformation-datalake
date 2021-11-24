@@ -8,6 +8,38 @@ Resources:
       ResourceArn: !Sub arn:aws:s3:::${Datalake}-${AWS::AccountId}-${AWS::Region}-converted
       UseServiceLinkedRole: True
 
+  convertedBucketPermissions:
+    Type: AWS::LakeFormation::Permissions
+    DependsOn: convertedBucketResource
+    Properties:
+      DataLakePrincipal:
+        DataLakePrincipalIdentifier: !Sub arn:aws:iam::${AWS::AccountId}:role/${Datalake}-${AWS::AccountId}-${AWS::Region}-GlueServiceRole
+      Permissions:
+        - DATA_LOCATION_ACCESS
+      Resource:
+        DataLocationResource:
+          CatalogId: !Ref AWS::AccountId
+          S3Resource: !Sub arn:aws:s3:::${Datalake}-${AWS::AccountId}-${AWS::Region}-converted
+
+  rawdBucketResource:
+    Type: AWS::LakeFormation::Resource
+    Properties:
+      ResourceArn: !Sub arn:aws:s3:::${Datalake}-${AWS::AccountId}-${AWS::Region}-raw
+      UseServiceLinkedRole: True
+
+  rawBucketPermissions:
+    Type: AWS::LakeFormation::Permissions
+    DependsOn: rawdBucketResource
+    Properties:
+      DataLakePrincipal:
+        DataLakePrincipalIdentifier: !Sub arn:aws:iam::${AWS::AccountId}:role/${Datalake}-${AWS::AccountId}-${AWS::Region}-GlueServiceRole
+      Permissions:
+        - DATA_LOCATION_ACCESS
+      Resource:
+        DataLocationResource:
+          CatalogId: !Ref AWS::AccountId
+          S3Resource: !Sub arn:aws:s3:::${Datalake}-${AWS::AccountId}-${AWS::Region}-raw
+
   EventDrivenWorkflow:
     Type: AWS::Glue::Workflow
     Properties:
